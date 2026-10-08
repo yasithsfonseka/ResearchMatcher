@@ -1,0 +1,48 @@
+[
+  {
+    "query_id": "q1",
+    "research_title": "Conversational AI and dialogue personalization using neural transformers",
+    "research_description": "Exploring how large language models adapt dialogue responses to individual user preferences and conversational histories.",
+    "keywords": ["conversational ai", "dialogue personalization", "transformers", "user modeling"],
+    "judgments": [
+      {
+        "paper_id": "openalex:W4232533539",
+        "title": "Personalized Conversational Agents: A Survey",
+        "relevance_score": 2
+      },
+      {
+        "paper_id": "openalex:W4232533540",
+        "title": "Transformer Networks for Natural Language Processing",
+        "relevance_score": 1
+      },
+      {
+        "paper_id": "openalex:W4232533541",
+        "title": "Image Recognition using Convolutional Layers",
+        "relevance_score": 0
+      }
+    ]
+  },
+  {
+    "query_id": "q2",
+    "research_title": "Graph neural networks for drug discovery and molecular property prediction",
+    "research_description": "Leveraging GNNs and spatial molecular graph representations for virtual screening and binding affinity prediction.",
+    "keywords": ["graph neural networks", "drug discovery", "molecular property", "bioinformatics"],
+    "judgments": [
+      {
+        "paper_id": "openalex:W4232533542",
+        "title": "Molecular Property Prediction via 3D Graph Neural Networks",
+        "relevance_score": 2
+      },
+      {
+        "paper_id": "openalex:W4232533543",
+        "title": "Introduction to Graph Algorithms in Computer Science",
+        "relevance_score": 1
+      },
+      {
+        "paper_id": "openalex:W4232533544",
+        "title": "Operating Systems Architecture and Memory Management",
+        "relevance_score": 0
+      }
+    ]
+  }
+]

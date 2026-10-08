@@ -1,0 +1,33 @@
+from app.models.models import (
+    User,
+    Paper,
+    Author,
+    PaperAuthor,
+    PaperSourceRecord,
+    Subject,
+    PaperSubject,
+    PaperEmbedding,
+    Collection,
+    CollectionPaper,
+    SearchRun,
+    SearchResult,
+    RelevanceFeedback,
+    IngestionJob,
+)
+
+__all__ = [
+    "User",
+    "Paper",
+    "Author",
+    "PaperAuthor",
+    "PaperSourceRecord",
+    "Subject",
+    "PaperSubject",
+    "PaperEmbedding",
+    "Collection",
+    "CollectionPaper",
+    "SearchRun",
+    "SearchResult",
+    "RelevanceFeedback",
+    "IngestionJob",
+]
