@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from starlette.concurrency import run_in_threadpool
 from app.models.models import SearchRun, SearchResult, Paper, PaperEmbedding
 from app.schemas.schemas import SearchQueryRequest, SearchResultItem, PaperOut, AuthorOut, SubjectOut, PaperSubjectOut, SourceRecordOut
 from app.providers.openalex import OpenAlexProvider
@@ -101,9 +102,9 @@ async def execute_search(
 ) -> Tuple[SearchRun, List[SearchResultItem], Dict[str, Any]]:
     
     provider_status = {}
-    fetched_papers: List[Paper] = []
+    oa_results: List[Any] = []
     
-    # 1. Retrieve candidates from OpenAlex
+    # 1. Retrieve candidates from OpenAlex (async I/O stays on the event loop)
     openalex = OpenAlexProvider()
     try:
         oa_results = await openalex.search_papers(
@@ -118,6 +119,28 @@ async def execute_search(
             "status": "success",
             "candidate_count": len(oa_results)
         }
+    except Exception as e:
+        logger.error(f"OpenAlex retrieval error: {e}")
+        provider_status["openalex"] = {
+            "status": "error",
+            "error_message": str(e),
+            "candidate_count": 0
+        }
+
+    # All remaining work is synchronous (DB, embeddings, scoring); run it in a worker thread
+    return await run_in_threadpool(_run_search_sync, db, req, oa_results, provider_status, user_id)
+
+
+def _run_search_sync(
+    db: Session,
+    req: SearchQueryRequest,
+    oa_results: List[Any],
+    provider_status: Dict[str, Any],
+    user_id: Optional[str] = None
+) -> Tuple[SearchRun, List[SearchResultItem], Dict[str, Any]]:
+    fetched_papers: List[Paper] = []
+
+    try:
         for provider_paper in oa_results:
             p_model = upsert_provider_paper(db, provider_paper)
             fetched_papers.append(p_model)
