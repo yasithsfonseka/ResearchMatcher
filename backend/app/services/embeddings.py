@@ -38,7 +38,7 @@ def generate_embedding(text: str) -> List[float]:
         logger.warning(f"Model encode failed ({e}). Using fallback vector.")
 
     # Fallback deterministic normalized vector if model loading/encoding fails
-    rng = np.random.RandomState(seed=abs(hash(text)) % (2**32))
+    rng = np.random.RandomState(seed=int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:8], 16))
     vec = rng.randn(settings.EMBEDDING_DIMENSION).astype(np.float32)
     norm = np.linalg.norm(vec)
     return (vec / (norm + 1e-9)).tolist()
