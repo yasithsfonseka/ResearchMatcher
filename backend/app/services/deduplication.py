@@ -1,5 +1,7 @@
 import logging
 from typing import List, Optional
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.models.models import (
     Paper, Author, PaperAuthor, Subject, PaperSubject, PaperSourceRecord
@@ -9,20 +11,61 @@ from app.services.normalization import normalize_title, normalize_doi
 
 logger = logging.getLogger(__name__)
 
+def _find_existing_paper(
+    db: Session, norm_doi: Optional[str], norm_title: Optional[str]
+) -> Optional[Paper]:
+    existing: Optional[Paper] = None
+
+    # 1. Prefer DOI match. Compare case-insensitively so rows written by other
+    # code paths without normalization are still found.
+    if norm_doi:
+        existing = db.query(Paper).filter(
+            func.lower(Paper.doi) == norm_doi.lower()
+        ).first()
+
+    # 2. Fallback to exact normalized title match if no DOI or not found
+    if not existing and norm_title:
+        existing = db.query(Paper).filter(Paper.normalized_title == norm_title).first()
+
+    return existing
+
+
 def upsert_provider_paper(db: Session, p: ProviderPaper) -> Paper:
     norm_doi = normalize_doi(p.doi)
     norm_title = normalize_title(p.canonical_title)
-    
-    existing_paper: Optional[Paper] = None
-    
-    # 1. Prefer DOI match
-    if norm_doi:
-        existing_paper = db.query(Paper).filter(Paper.doi == norm_doi).first()
-        
-    # 2. Fallback to exact normalized title match if no DOI or not found
-    if not existing_paper and norm_title:
-        existing_paper = db.query(Paper).filter(Paper.normalized_title == norm_title).first()
-        
+
+    existing_paper = _find_existing_paper(db, norm_doi, norm_title)
+
+    if not existing_paper:
+        # Create new paper
+        new_paper = Paper(
+            canonical_title=p.canonical_title,
+            normalized_title=norm_title,
+            abstract=p.abstract,
+            doi=norm_doi,
+            publication_date=p.publication_date,
+            publication_year=p.publication_year,
+            venue=p.venue,
+            work_type=p.work_type,
+            language=p.language
+        )
+        try:
+            db.add(new_paper)
+            db.flush()
+            paper = new_paper
+        except IntegrityError:
+            # Unique constraint hit (e.g. papers_doi_key). The session is in a
+            # failed state and must be rolled back before it can be used again.
+            db.rollback()
+            logger.warning(
+                "IntegrityError inserting paper doi=%s title=%r; re-querying existing row",
+                norm_doi, p.canonical_title
+            )
+            existing_paper = _find_existing_paper(db, norm_doi, norm_title)
+            if not existing_paper:
+                raise
+            paper = existing_paper
+
     if existing_paper:
         # Update fields if new provider has richer metadata (e.g. abstract)
         if not existing_paper.abstract and p.abstract:
@@ -34,21 +77,6 @@ def upsert_provider_paper(db: Session, p: ProviderPaper) -> Paper:
         if not existing_paper.publication_year and p.publication_year:
             existing_paper.publication_year = p.publication_year
         paper = existing_paper
-    else:
-        # Create new paper
-        paper = Paper(
-            canonical_title=p.canonical_title,
-            normalized_title=norm_title,
-            abstract=p.abstract,
-            doi=norm_doi,
-            publication_date=p.publication_date,
-            publication_year=p.publication_year,
-            venue=p.venue,
-            work_type=p.work_type,
-            language=p.language
-        )
-        db.add(paper)
-        db.flush()
 
     # Upsert Source Record
     existing_src = db.query(PaperSourceRecord).filter(
