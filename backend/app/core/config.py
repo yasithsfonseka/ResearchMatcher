@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     
+    # Comma-separated list of allowed CORS origins (e.g. "https://a.example.com,https://b.example.com")
+    CORS_ALLOWED_ORIGINS: str = ""
+    
     # Public origin of the deployed frontend (e.g. https://frontend.example.com)
     FRONTEND_URL: Optional[str] = None
     
