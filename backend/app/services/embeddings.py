@@ -28,20 +28,34 @@ def get_embedding_model():
 def compute_text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-def generate_embedding(text: str) -> List[float]:
-    try:
-        model = get_embedding_model()
-        if model is not None:
-            embedding = model.encode(text, normalize_embeddings=True)
-            return embedding.tolist()
-    except Exception as e:
-        logger.warning(f"Model encode failed ({e}). Using fallback vector.")
-
-    # Fallback deterministic normalized vector if model loading/encoding fails
+def _fallback_vector(text: str) -> List[float]:
+    # Deterministic normalized vector if model loading/encoding fails
     rng = np.random.RandomState(seed=int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:8], 16))
     vec = rng.randn(settings.EMBEDDING_DIMENSION).astype(np.float32)
     norm = np.linalg.norm(vec)
     return (vec / (norm + 1e-9)).tolist()
+
+def embed_texts(texts: List[str], batch_size: int = 32) -> List[List[float]]:
+    """Embed many texts with a single model.encode call, preserving input order."""
+    if not texts:
+        return []
+    try:
+        model = get_embedding_model()
+        if model is not None:
+            embeddings = model.encode(
+                texts,
+                batch_size=batch_size,
+                normalize_embeddings=True,
+                show_progress_bar=False
+            )
+            return [e.tolist() for e in embeddings]
+    except Exception as e:
+        logger.warning(f"Model encode failed ({e}). Using fallback vectors.")
+
+    return [_fallback_vector(t) for t in texts]
+
+def generate_embedding(text: str) -> List[float]:
+    return embed_texts([text])[0]
 
 def embed_paper(db: Session, paper: Paper) -> Optional[PaperEmbedding]:
     try:
