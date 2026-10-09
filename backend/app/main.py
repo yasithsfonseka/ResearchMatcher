@@ -1,4 +1,5 @@
 import logging
+import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -25,6 +26,17 @@ origins = [
     "http://localhost:8000",
     "http://127.0.0.1:8000",
 ]
+
+# Include the deployed frontend origin when configured
+_frontend_url = (os.getenv("FRONTEND_URL") or "").strip().rstrip("/")
+if _frontend_url and _frontend_url not in origins:
+    origins.append(_frontend_url)
+
+# Optionally honor a comma-separated CORS_ORIGINS env var
+for _origin in (os.getenv("CORS_ORIGINS") or "").split(","):
+    _origin = _origin.strip().rstrip("/")
+    if _origin and _origin not in origins:
+        origins.append(_origin)
 
 app.add_middleware(
     CORSMiddleware,
