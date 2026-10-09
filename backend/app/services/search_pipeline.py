@@ -140,17 +140,19 @@ def _run_search_sync(
 ) -> Tuple[SearchRun, List[SearchResultItem], Dict[str, Any]]:
     fetched_papers: List[Paper] = []
 
-    try:
-        for provider_paper in oa_results:
+    for provider_paper in oa_results:
+        try:
             p_model = upsert_provider_paper(db, provider_paper)
             fetched_papers.append(p_model)
-    except Exception as e:
-        logger.error(f"OpenAlex retrieval error: {e}")
-        provider_status["openalex"] = {
-            "status": "error",
-            "error_message": str(e),
-            "candidate_count": 0
-        }
+        except Exception as e:
+            # Reset the session so it stays usable, then skip only this paper.
+            db.rollback()
+            logger.warning(
+                "Skipping paper after upsert failure (doi=%s, title=%r): %s",
+                getattr(provider_paper, "doi", None),
+                getattr(provider_paper, "canonical_title", None),
+                e
+            )
 
     # Deduplicate fetched candidate papers list
     unique_papers_dict = {p.id: p for p in fetched_papers}
@@ -180,7 +182,11 @@ def _run_search_sync(
                     emb_val = json.loads(emb_val)
                 paper_vectors[p.id] = np.array(emb_val, dtype=np.float32)
         except Exception as e:
-            logger.warning(f"Error handling vector for paper {p.id}: {e}")
+            db.rollback()
+            logger.warning(
+                "Error handling vector for paper %s (doi=%s, title=%r): %s",
+                p.id, p.doi, p.canonical_title, e
+            )
 
     # 3. Score and Rank candidates
     query_vec_np = np.array(query_vector, dtype=np.float32) if query_vector else None
