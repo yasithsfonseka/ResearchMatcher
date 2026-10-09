@@ -47,7 +47,7 @@ export interface Paper {
   authors: Author[];
   source_records: SourceRecord[];
   subjects: PaperSubject[];
-  has_abstract: bool;
+  has_abstract: boolean;
 }
 
 export interface SearchResultItem {
@@ -120,6 +120,11 @@ export interface User {
   email: string;
   display_name: string;
   created_at: string;
+}
+
+export interface Token {
+  access_token: string;
+  token_type: string;
 }
 
 // Fetch helper with token
