@@ -28,12 +28,13 @@ origins = [
 ]
 
 # Include the deployed frontend origin when configured
-_frontend_url = (os.getenv("FRONTEND_URL") or "").strip().rstrip("/")
-if _frontend_url and _frontend_url not in origins:
-    origins.append(_frontend_url)
+if settings.FRONTEND_URL:
+    _frontend_url = settings.FRONTEND_URL.strip().rstrip("/")
+    if _frontend_url and _frontend_url not in origins:
+        origins.append(_frontend_url)
 
-# Optionally honor a comma-separated CORS_ORIGINS env var
-for _origin in (os.getenv("CORS_ORIGINS") or "").split(","):
+# Honor the CORS_ORIGINS setting
+for _origin in settings.CORS_ORIGINS:
     _origin = _origin.strip().rstrip("/")
     if _origin and _origin not in origins:
         origins.append(_origin)

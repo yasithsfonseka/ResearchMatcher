@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     
+    # Public origin of the deployed frontend (e.g. https://frontend.example.com)
+    FRONTEND_URL: Optional[str] = None
+    
     class Config:
         env_file = ".env"
         extra = "ignore"
