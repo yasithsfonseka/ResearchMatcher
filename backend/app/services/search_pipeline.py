@@ -107,6 +107,8 @@ async def execute_search(
     
     # 1. Retrieve candidates from OpenAlex (async I/O stays on the event loop)
     openalex = OpenAlexProvider()
+    logger.info("search stage=openalex_fetch starting")
+    fetch_started = time.perf_counter()
     try:
         oa_results = await openalex.search_papers(
             query=req.research_title,
@@ -127,6 +129,11 @@ async def execute_search(
             "error_message": str(e),
             "candidate_count": 0
         }
+    logger.info(
+        "search stage=openalex_fetch elapsed=%.2fs count=%d",
+        time.perf_counter() - fetch_started,
+        len(oa_results)
+    )
 
     # All remaining work is synchronous (DB, embeddings, scoring); run it in a worker thread
     return await run_in_threadpool(_run_search_sync, db, req, oa_results, provider_status, user_id)
@@ -139,8 +146,29 @@ def _run_search_sync(
     provider_status: Dict[str, Any],
     user_id: Optional[str] = None
 ) -> Tuple[SearchRun, List[SearchResultItem], Dict[str, Any]]:
+    try:
+        return _run_search_stages(db, req, oa_results, provider_status, user_id)
+    except Exception:
+        # Never leave an open transaction (and its row locks) behind after a failed request.
+        logger.exception("search failed; rolling back session")
+        try:
+            db.rollback()
+        except Exception as rollback_error:
+            logger.warning("Rollback after search failure also failed: %s", rollback_error)
+        raise
+
+
+def _run_search_stages(
+    db: Session,
+    req: SearchQueryRequest,
+    oa_results: List[Any],
+    provider_status: Dict[str, Any],
+    user_id: Optional[str] = None
+) -> Tuple[SearchRun, List[SearchResultItem], Dict[str, Any]]:
     fetched_papers: List[Paper] = []
 
+    logger.info("search stage=upsert starting count=%d", len(oa_results))
+    upsert_started = time.perf_counter()
     for provider_paper in oa_results:
         try:
             p_model = upsert_provider_paper(db, provider_paper)
@@ -154,6 +182,11 @@ def _run_search_sync(
                 getattr(provider_paper, "canonical_title", None),
                 e
             )
+    logger.info(
+        "search stage=upsert elapsed=%.2fs count=%d",
+        time.perf_counter() - upsert_started,
+        len(fetched_papers)
+    )
 
     # Deduplicate fetched candidate papers list
     unique_papers_dict = {p.id: p for p in fetched_papers}
@@ -169,7 +202,10 @@ def _run_search_sync(
 
     # 2. Query vector embedding for semantic matching
     full_query_text = f"{req.research_title}. {req.research_description or ''} {' '.join(req.keywords or [])}".strip()
+    logger.info("search stage=embed_query starting")
+    query_embed_started = time.perf_counter()
     query_vector = generate_embedding(full_query_text)
+    logger.info("search stage=embed_query elapsed=%.2fs", time.perf_counter() - query_embed_started)
     
     # Embed candidate papers if not embedded
     paper_vectors: Dict[str, np.ndarray] = {}
@@ -186,6 +222,7 @@ def _run_search_sync(
             p.id, p.doi, p.canonical_title, e
         )
 
+    logger.info("search stage=embed_papers starting candidates=%d", len(candidate_papers))
     embed_started = time.perf_counter()
 
     # Reuse stored embeddings; collect the rest so they can be encoded in one batch
@@ -253,6 +290,8 @@ def _run_search_sync(
     )
 
     # 3. Score and Rank candidates
+    logger.info("search stage=scoring starting count=%d", len(candidate_papers))
+    scoring_started = time.perf_counter()
     query_vec_np = np.array(query_vector, dtype=np.float32) if query_vector else None
     
     scored_items: List[Tuple[Paper, float, float, float, float]] = []
@@ -288,8 +327,15 @@ def _run_search_sync(
 
     # Sort by final score descending
     scored_items.sort(key=lambda x: x[4], reverse=True)
+    logger.info(
+        "search stage=scoring elapsed=%.2fs count=%d",
+        time.perf_counter() - scoring_started,
+        len(scored_items)
+    )
     
     # 4. Save SearchRun
+    logger.info("search stage=db_save starting")
+    save_started = time.perf_counter()
     search_run = SearchRun(
         user_id=user_id,
         research_title=req.research_title,
@@ -347,5 +393,10 @@ def _run_search_sync(
 
     db.commit()
     db.refresh(search_run)
+    logger.info(
+        "search stage=db_save elapsed=%.2fs count=%d",
+        time.perf_counter() - save_started,
+        len(results)
+    )
     
     return search_run, results, provider_status
