@@ -1,4 +1,5 @@
 import re
+import time
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
@@ -9,7 +10,7 @@ from app.models.models import SearchRun, SearchResult, Paper, PaperEmbedding
 from app.schemas.schemas import SearchQueryRequest, SearchResultItem, PaperOut, AuthorOut, SubjectOut, PaperSubjectOut, SourceRecordOut
 from app.providers.openalex import OpenAlexProvider
 from app.services.deduplication import upsert_provider_paper
-from app.services.embeddings import embed_paper, generate_embedding, compute_text_hash
+from app.services.embeddings import embed_paper, embed_texts, generate_embedding, compute_text_hash
 from app.services.explanations import generate_match_explanation
 from app.core.config import settings
 
@@ -172,21 +173,84 @@ def _run_search_sync(
     
     # Embed candidate papers if not embedded
     paper_vectors: Dict[str, np.ndarray] = {}
+
+    def _to_np(emb_val: Any) -> np.ndarray:
+        if isinstance(emb_val, str):
+            import json
+            emb_val = json.loads(emb_val)
+        return np.array(emb_val, dtype=np.float32)
+
+    def _warn_paper(p: Paper, e: Exception) -> None:
+        logger.warning(
+            "Error handling vector for paper %s (doi=%s, title=%r): %s",
+            p.id, p.doi, p.canonical_title, e
+        )
+
+    embed_started = time.perf_counter()
+
+    # Reuse stored embeddings; collect the rest so they can be encoded in one batch
+    pending: List[Tuple[Paper, str, str]] = []  # (paper, text, input_hash)
     for p in candidate_papers:
         try:
-            emb_record = embed_paper(db, p)
-            if emb_record and emb_record.embedding is not None:
-                emb_val = emb_record.embedding
-                if isinstance(emb_val, str):
-                    import json
-                    emb_val = json.loads(emb_val)
-                paper_vectors[p.id] = np.array(emb_val, dtype=np.float32)
+            text_content = f"{p.canonical_title}. {p.abstract or ''}".strip()
+            if not text_content:
+                continue
+            input_hash = compute_text_hash(text_content)
+            existing = db.query(PaperEmbedding).filter(
+                PaperEmbedding.paper_id == p.id,
+                PaperEmbedding.model_id == settings.EMBEDDING_MODEL_NAME,
+                PaperEmbedding.input_hash == input_hash
+            ).first()
+            if existing and existing.embedding is not None:
+                paper_vectors[p.id] = _to_np(existing.embedding)
+            else:
+                pending.append((p, text_content, input_hash))
         except Exception as e:
             db.rollback()
-            logger.warning(
-                "Error handling vector for paper %s (doi=%s, title=%r): %s",
-                p.id, p.doi, p.canonical_title, e
-            )
+            _warn_paper(p, e)
+
+    if pending:
+        try:
+            batch_vectors = embed_texts([text_content for _, text_content, _ in pending])
+            if len(batch_vectors) != len(pending):
+                raise ValueError("batch embedding size mismatch")
+        except Exception as e:
+            logger.warning("Batch embedding failed (%s); falling back to per-paper embedding", e)
+            batch_vectors = None
+
+        if batch_vectors is not None:
+            for (p, _, input_hash), vec in zip(pending, batch_vectors):
+                try:
+                    paper_id = p.id
+                    db.add(PaperEmbedding(
+                        paper_id=paper_id,
+                        model_id=settings.EMBEDDING_MODEL_NAME,
+                        model_revision="v1",
+                        input_hash=input_hash,
+                        embedding=vec
+                    ))
+                    db.commit()
+                    paper_vectors[paper_id] = np.array(vec, dtype=np.float32)
+                except Exception as e:
+                    db.rollback()
+                    _warn_paper(p, e)
+        else:
+            for p, _, _ in pending:
+                try:
+                    emb_record = embed_paper(db, p)
+                    if emb_record and emb_record.embedding is not None:
+                        paper_vectors[p.id] = _to_np(emb_record.embedding)
+                except Exception as e:
+                    db.rollback()
+                    _warn_paper(p, e)
+
+    logger.info(
+        "Embedded candidates in %.2fs (candidates=%d, newly_encoded=%d, vectors=%d)",
+        time.perf_counter() - embed_started,
+        len(candidate_papers),
+        len(pending),
+        len(paper_vectors)
+    )
 
     # 3. Score and Rank candidates
     query_vec_np = np.array(query_vector, dtype=np.float32) if query_vector else None
