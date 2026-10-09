@@ -6,7 +6,7 @@ import { SearchResponse, SearchResultItem, apiFetch } from '@/lib/api';
 import PaperCard from '@/components/PaperCard';
 import { Search, SlidersHorizontal, ArrowUpDown, AlertCircle, RefreshCw, CheckCircle2, Info } from 'lucide-react';
 
-function SearchPageContent() {
+function SearchContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -187,8 +187,12 @@ function SearchPageContent() {
 
 export default function SearchPage() {
   return (
-    <Suspense fallback={null}>
-      <SearchPageContent />
+    <Suspense
+      fallback={
+        <div className="py-20 text-center text-sm text-gray-400">Loading search...</div>
+      }
+    >
+      <SearchContent />
     </Suspense>
   );
 }
